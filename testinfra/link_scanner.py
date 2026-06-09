@@ -62,6 +62,19 @@ _PAT_DASH = re.compile(
     re.IGNORECASE,
 )
 
+# Pattern E – "Component_1.7.1" or "Component_1.7.1 - Shortcut"
+# Underscore immediately precedes the version; an optional trailing dash-suffix is ignored.
+_PAT_UNDERSCORE = re.compile(
+    rf"(?P<component>.+?)_(?P<version>{_VER})(?:\s*[-–]\s*.+)?\s*$",
+    re.IGNORECASE,
+)
+
+# Pattern F – "Alice 1.12.0"  (single space before a bare version at end of segment)
+_PAT_SPACE = re.compile(
+    rf"(?P<component>.+?)\s+(?P<version>{_VER})\s*$",
+    re.IGNORECASE,
+)
+
 # Pattern B – "…\component\v1.0.1-rc1\" or "…\component\1.14.0-1\"
 _PAT_BACKSLASH_V = re.compile(
     rf"\\(?P<component>[^\\]+)\\(?P<version>v\d[^\\]*)[\\]?$",
@@ -91,11 +104,12 @@ def extract_component_version(path_str: str) -> tuple[Optional[str], Optional[st
     if not path_str:
         return None, None
 
-    # 1. Dash pattern – check individual path segments first (most specific),
-    #    then fall back to the full string.
+    # 1. Name-level patterns – check individual path segments first (most specific),
+    #    then fall back to the full string.  Order: dash > underscore > space.
     segments = path_str.replace("/", "\\").split("\\")
     for segment in segments + [path_str]:
-        m = _PAT_DASH.match(segment.strip())
+        s = segment.strip()
+        m = _PAT_DASH.match(s) or _PAT_UNDERSCORE.match(s) or _PAT_SPACE.match(s)
         if m:
             return m.group("component").strip(), m.group("version").strip().lstrip("vV")
 
@@ -153,15 +167,18 @@ def scan_directory(root: Path, verbose: bool = False) -> list[dict]:
     for lnk_path in lnk_files:
         target, workdir = read_lnk_target(lnk_path)
 
-        # Try to extract from target first, then working directory
+        # Try to extract from target first, then working directory, then the
+        # .lnk filename stem (e.g. "SomeName - 1.14.0-1")
         component, version = extract_component_version(target or "")
         if not component:
             component, version = extract_component_version(workdir or "")
+        if not component:
+            component, version = extract_component_version(lnk_path.stem)
 
         row = {
             "shortcut_file": str(lnk_path),
             "shortcut_name": lnk_path.stem,
-            "target_path": target or "",
+            "target_path": target or lnk_path.target(),
             "working_dir": workdir or "",
             "component": component or "",
             "version": version or "",
