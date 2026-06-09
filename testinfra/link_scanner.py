@@ -5,8 +5,8 @@ Recursively scans a directory for Windows shortcut (.lnk) files,
 extracts the link target path, and parses the component name + version
 from two common patterns:
 
-  Pattern A – dash-separated suffix:   "SomeName - 3.5.3"
-  Pattern B – backslash version folder: "\\component\\name\\v1.0.3\\"
+  Pattern A – dash-separated suffix:   "SomeName - 1.14.0-1"
+  Pattern B – backslash version folder: "\\component\\v1.0.1-rc1\\"
 
 Results are written to a CSV file.
 
@@ -35,29 +35,51 @@ except ImportError:
 # ---------------------------------------------------------------------------
 # Version-extraction patterns (applied in order; first match wins)
 # ---------------------------------------------------------------------------
+#
+# Supported version formats:
+#   1.14.0          plain numeric
+#   1.14.0-1        numeric with build/patch suffix
+#   v1.0.1          v-prefixed
+#   v1.0.1-rc1      v-prefixed with pre-release label  (rc1, alpha2, beta3 …)
+#   1.2.3-rc1       non-v-prefixed with pre-release label
+#
+# The core fragment: optional 'v', then MAJOR.MINOR[.PATCH[.BUILD]],
+# then an optional dash + alphanumeric pre-release/build tag.
+# ---------------------------------------------------------------------------
 
-# Pattern A – "Component Name - 1.2.3"  (anywhere in the string)
-_PAT_DASH = re.compile(
-    r"(?P<component>.+?)\s*[-–]\s*(?P<version>\d+[\d.]*(?:[._-]?[a-zA-Z0-9]+)*)\s*$"
+_VER = (
+    r"v?"                            # optional 'v' prefix
+    r"\d+\.\d+"                      # MAJOR.MINOR  (required)
+    r"(?:\.\d+)*"                    # .PATCH, .BUILD … (0 or more)
+    r"(?:-[a-zA-Z0-9]+(?:\.\d+)*)?" # optional -prerelease tag (e.g. -rc1, -1, -alpha2)
 )
 
-# Pattern B – "…\component\name\v1.2.3\" or "…\name\1.2.3\"
-# Captures the last non-version folder segment as the component name.
+# Pattern A – "Component Name - 1.14.0-1"  (dash/en-dash separator in a segment)
+# The separator dash is distinguished from the pre-release dash because the
+# version part starts with a digit (or 'v' followed by a digit).
+_PAT_DASH = re.compile(
+    rf"(?P<component>.+?)\s*[-–]\s*(?P<version>{_VER})\s*$",
+    re.IGNORECASE,
+)
+
+# Pattern B – "…\component\v1.0.1-rc1\" or "…\component\1.14.0-1\"
 _PAT_BACKSLASH_V = re.compile(
-    r"\\(?P<component>[^\\]+)\\v(?P<version>\d+[\d.]*(?:[._-]?[a-zA-Z0-9]*)?)[\\$]",
+    rf"\\(?P<component>[^\\]+)\\(?P<version>v\d[^\\]*)[\\]?$",
     re.IGNORECASE,
 )
 _PAT_BACKSLASH_BARE = re.compile(
-    r"\\(?P<component>[^\\]+)\\(?P<version>\d+\.\d+[\d.]*(?:[._-]?[a-zA-Z0-9]*)?)[\\$]"
+    rf"\\(?P<component>[^\\]+)\\(?P<version>{_VER})[\\]?$",
+    re.IGNORECASE,
 )
 
-# Catch-all: any version-like token (vX.Y or X.Y.Z) anywhere in the path
+# Catch-all: version folder anywhere mid-path (followed by another backslash)
 _PAT_ANYWHERE_V = re.compile(
-    r"[/\\](?P<component>[^/\\]+)[/\\]v(?P<version>\d+[\d.]+)",
+    rf"[/\\](?P<component>[^/\\]+)[/\\](?P<version>v\d[^/\\]*)[/\\]",
     re.IGNORECASE,
 )
 _PAT_ANYWHERE_BARE = re.compile(
-    r"[/\\](?P<component>[^/\\]+)[/\\](?P<version>\d+\.\d+[\d.]*)"
+    rf"[/\\](?P<component>[^/\\]+)[/\\](?P<version>{_VER})[/\\]",
+    re.IGNORECASE,
 )
 
 
@@ -75,27 +97,27 @@ def extract_component_version(path_str: str) -> tuple[Optional[str], Optional[st
     for segment in segments + [path_str]:
         m = _PAT_DASH.match(segment.strip())
         if m:
-            return m.group("component").strip(), m.group("version").strip()
+            return m.group("component").strip(), m.group("version").strip().lstrip("vV")
 
     # 2. Backslash + explicit 'v' prefix
     m = _PAT_BACKSLASH_V.search(path_str)
     if m:
-        return m.group("component").strip(), m.group("version").strip()
+        return m.group("component").strip(), m.group("version").strip().lstrip("vV")
 
     # 3. Backslash bare numeric version folder
     m = _PAT_BACKSLASH_BARE.search(path_str)
     if m:
-        return m.group("component").strip(), m.group("version").strip()
+        return m.group("component").strip(), m.group("version").strip().lstrip("vV")
 
     # 4. Anywhere in the path with 'v' prefix
     m = _PAT_ANYWHERE_V.search(path_str)
     if m:
-        return m.group("component").strip(), m.group("version").strip()
+        return m.group("component").strip(), m.group("version").strip().lstrip("vV")
 
     # 5. Anywhere bare
     m = _PAT_ANYWHERE_BARE.search(path_str)
     if m:
-        return m.group("component").strip(), m.group("version").strip()
+        return m.group("component").strip(), m.group("version").strip().lstrip("vV")
 
     return None, None
 
